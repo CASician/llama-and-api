@@ -1,11 +1,12 @@
 import os
 import json
-from snap_api import get_agencies, get_bus_lines
+from snap_api import get_agencies, get_bus_lines, get_bus_routes, get_bus_stops
 from openai import OpenAI
 from dotenv import load_dotenv
 load_dotenv()
 
-my_model = "gpt-4.1-nano"
+models = ["gpt-4o","gpt-4o-mini", "o4-mini", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1", "gpt-3.5-turbo", "gpt-5-mini"]
+my_model = models[3]
 
 # -------- CONFIGURATION --------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -37,6 +38,37 @@ TOOLS = [
                 "required": ["agency_url"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_bus_routes",
+            "description": "Returns the routes for a bus line of an agency.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agency_url": {"type": "string", "description": "Full agency URL."},
+                    "line": {"type": "string", "description": "Line name/number."},
+                    "geometry": {"type": "boolean", "description": "Include route geometry.", "default": False}
+                },
+                "required": ["agency_url", "line"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_bus_stops",
+            "description": "Returns the stops for a specific route.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "route_url": {"type": "string", "description": "Full route URL."},
+                    "geometry": {"type": "boolean", "description": "Include stop geometry.", "default": False}
+                },
+                "required": ["route_url"]
+            }
+        }
     }
 ]
 
@@ -52,10 +84,12 @@ def agent_loop():
     """
     messages = [
         {"role": "system", "content": (
-            "You can call TPL APIs if needed. "
-            "When the user asks about bus lines for a city/area, first retrieve agencies, "
-            "identify the correct agency by matching name/city/area, then call get_bus_lines "
-            "with the agency's URL. If unclear, ask a brief clarifying question."
+            "You can call TPL APIs if needed. For TPL queries: "
+            "(1) If the user mentions a city/area/operator, first call get_agencies and match by name/city/area; "
+            "(2) To list lines, call get_bus_lines(agency_url); "
+            "(3) To explore a specific line, call get_bus_routes(agency_url, line, geometry?); "
+            "(4) To list stops, call get_bus_stops(route_url, geometry?); "
+            "Ask a short clarifying question if any required parameter is ambiguous."
         )}
     ]
 
@@ -125,6 +159,29 @@ def agent_loop():
                         result_payload = get_bus_lines(agency_url=agency_url)
                     except Exception as e:
                         error_message = f"get_bus_lines failed: {e}"
+            elif function_name == "get_bus_routes":
+                agency_url = args.get("agency_url") if isinstance(args, dict) else None
+                line = args.get("line") if isinstance(args, dict) else None
+                geometry = bool(args.get("geometry")) if isinstance(args, dict) else False
+                if not agency_url or not line:
+                    error_message = "Missing required 'agency_url' or 'line' argument."
+                else:
+                    try:
+                        result_payload = get_bus_routes(agency_url=agency_url, line=line, geometry=geometry)
+                    except Exception as e:
+                        error_message = f"get_bus_routes failed: {e}"
+
+            elif function_name == "get_bus_stops":
+                route_url = args.get("route_url") if isinstance(args, dict) else None
+                geometry = bool(args.get("geometry")) if isinstance(args, dict) else False
+                if not route_url:
+                    error_message = "Missing required 'route_url' argument."
+                else:
+                    try:
+                        result_payload = get_bus_stops(route_url=route_url, geometry=geometry)
+                    except Exception as e:
+                        error_message = f"get_bus_stops failed: {e}"
+
             else:
                 error_message = f"Unknown tool: {function_name}"
 

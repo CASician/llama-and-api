@@ -10,3 +10,5 @@ How to run:
 Capabilities:
 - Understands questions about TPL agencies and can fetch them from the API.
 - Can fetch bus lines for a specific agency by first identifying the agency and then calling `bus-lines?agency=AGENCY_URL`.
+ - Can fetch routes for a specific line via `bus-routes?agency=AGENCY_URL&line=LINE[&geometry=true]`.
+ - Can fetch stops for a specific route via `bus-stops?route=ROUTE_URL[&geometry=true]`.
