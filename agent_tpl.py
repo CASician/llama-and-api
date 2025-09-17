@@ -1,85 +1,88 @@
 import os
-import requests
+from snap_api import get_agencies
 from openai import OpenAI
 from dotenv import load_dotenv
 load_dotenv()
 
 my_model = "gpt-4o-mini"
 
-# -------- CONFIGURAZIONE --------
+# -------- CONFIGURATION --------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# URL base del portale TPL
-TPL_BASE_URL = "https://www.snap4city.org/superservicemap/api/v1/tpl"
-
-# -------- FUNZIONI API --------
-def get_agencies():
-    """
-    Chiama l'endpoint che restituisce le agenzie di autobus.
-    """
-    url = f"{TPL_BASE_URL}/agencies"
-    resp = requests.get(url, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
-
-# Mappa delle funzioni che il modello può invocare
+# Map of functions the model can invoke
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "get_agencies",
-            "description": "Ritorna la lista delle agenzie di autobus TPL.",
+            "description": "Returns the list of public transport (TPL) bus agencies.",
             "parameters": { "type": "object", "properties": {} }
         }
     }
 ]
 
-# -------- AGENTE --------
-def agent_loop(user_message: str):
+# -------- AGENT --------
+def agent_loop():
     """
-    Invia il messaggio utente al modello. Se il modello
-    richiede una tool call, esegue la funzione e rimanda il risultato.
+    Start an interactive conversational loop. Each turn it:
+    - reads the user's input,
+    - sends the context to the model with available tools,
+    - executes any requested tool calls,
+    - prints the response and preserves the conversation memory.
+    Type 'exit' or 'quit' to terminate.
     """
     messages = [
-        {"role": "system", "content": "Se necessario puoi chiamare le API TPL per rispondere."},
-        {"role": "user", "content": user_message}
+        {"role": "system", "content": "If needed you can call the TPL APIs to answer."}
     ]
 
-    # Prima risposta del modello
-    first = client.chat.completions.create(
-        model=my_model,      # poi 'llama-4' con base_url del laboratorio
-        messages=messages,
-        tools=TOOLS
-    )
+    while True:
+        try:
+            user_message = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nBye!")
+            break
 
-    choice = first.choices[0]
-    # Se non ha chiamato alcuna funzione, ritorna la risposta diretta
-    if not choice.message.tool_calls:
-        print(choice.message.content)
-        return
+        if not user_message:
+            continue
+        if user_message.lower() in {"exit", "quit"}:
+            print("Bye!")
+            break
 
-    # Esegui la/e funzioni richieste
-    for tool_call in choice.message.tool_calls:
-        if tool_call.function.name == "get_agencies":
-            result = get_agencies()
-            # Aggiungi il risultato alla conversazione
-            messages.append(choice.message)  # output del modello
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": str(result)
-            })
+        messages.append({"role": "user", "content": user_message})
 
-    # Seconda chiamata: il modello usa i dati per comporre la risposta finale
-    second = client.chat.completions.create(
-        model=my_model,
-        messages=messages
-    )
-    print(second.choices[0].message.content)
+        # First call: the model may decide to use tools
+        first = client.chat.completions.create(
+            model=my_model,
+            messages=messages,
+            tools=TOOLS
+        )
 
+        choice = first.choices[0]
 
-if __name__ == "__main__":
-    # Esempio d'uso
-    domanda = "Quali sono le linee di autobus disponibili in Toscana?"
-    agent_loop(domanda)
+        # If there are no tool calls, respond directly and remember it
+        if not choice.message.tool_calls:
+            assistant_text = choice.message.content or ""
+            print(f"Assistant: {assistant_text}")
+            messages.append({"role": "assistant", "content": assistant_text})
+            continue
+
+        # Execute functions requested by the model
+        messages.append(choice.message)  # include message with tool_calls
+        for tool_call in choice.message.tool_calls:
+            if tool_call.function.name == "get_agencies":
+                result = get_agencies()
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": str(result)
+                })
+
+        # Second call: compose the final answer using tool results
+        second = client.chat.completions.create(
+            model=my_model,
+            messages=messages
+        )
+        assistant_text = second.choices[0].message.content or ""
+        print(f"Assistant: {assistant_text}")
+        messages.append({"role": "assistant", "content": assistant_text})
